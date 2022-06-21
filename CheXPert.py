@@ -58,7 +58,8 @@ class_names = ['No Finding', 'Enlarged Cardiomediastinum', 'Cardiomegaly', 'Lung
                'Lung Lesion', 'Edema', 'Consolidation', 'Pneumonia', 'Atelectasis', 'Pneumothorax', 
                'Pleural Effusion', 'Pleural Other', 'Fracture', 'Support Devices']
 
-num_clients = 3
+num_clients = 1
+device = 'cpu'
 
 #Inheriting DataSet class which takes CSV file 
 class FromCSVDataset(Dataset):
@@ -126,7 +127,7 @@ def data_processing(comm: MPI.Comm):
 
     split_size = int(len_training_data/num_clients)
     for client_idx in range(num_clients):
-        train_datasets.append(train_data_path, split_size * client_idx, split_size * (client_idx + 1))
+        train_datasets.append(FromCSVDataset(train_data_path, split_size * client_idx, split_size * (client_idx + 1)))
     
     return train_datasets, test_dataset
             
@@ -156,3 +157,73 @@ def get_model(comm: MPI.Comm):
     return model
 
 
+def main():
+    '''
+    Part of this code is from https://github.com/APPFL/APPFL/blob/96a1da6d7aeb64a8a78bfcc7dc60fa37273dfdb5/examples/mnist.py
+    '''
+
+    comm = MPI.COMM_WORLD
+    comm_rank = comm.Get_rank()
+    comm_size = comm.Get_size()
+
+    '''Config'''
+    cfg = OmegaConf.structured(Config)
+
+    cfg.device = device
+    cfg.reproduce = True
+    if cfg.reproduce == True:
+        set_seed(1)
+
+     ## clients
+    cfg.num_clients = num_clients
+    cfg.fed.args.optim = 'Adam'
+    cfg.fed.args.optim_args.lr = 1e-3
+    cfg.fed.args.num_local_epochs = 1
+
+    ## server
+    cfg.fed.servername = "ServerFedAvg"
+    cfg.num_epochs = 2
+
+    start_time = time.time()
+
+    """ User-defined model """
+    model = get_model(comm)
+    loss_fn = torch.nn.CrossEntropyLoss()
+
+    ## loading models
+    cfg.load_model = False
+    if cfg.load_model == True:
+        cfg.load_model_dirname = "./save_models"
+        cfg.load_model_filename = "Model"
+        model = load_model(cfg)
+
+    """ User-defined data """
+    train_datasets, test_dataset = data_processing(comm)
+
+    print(
+        "-------Loading_Time=",
+        time.time() - start_time,
+    )
+
+    """ saving models """
+    cfg.save_model = False
+    if cfg.save_model == True:
+        cfg.save_model_dirname = "./save_models"
+        cfg.save_model_filename = "Model"
+
+    """ Running """
+    if comm_size > 1:
+        if comm_rank == 0:
+            rm.run_server(
+                cfg, comm, model, loss_fn, num_clients, test_dataset
+            )
+        else:
+            rm.run_client(
+                cfg, comm, model, loss_fn, num_clients, train_datasets, test_dataset
+            )
+        print("------DONE------", comm_rank)
+    else:
+        rs.run_serial(cfg, model, loss_fn, train_datasets, test_dataset)
+        
+if __name__ == "__main__":
+    main()
