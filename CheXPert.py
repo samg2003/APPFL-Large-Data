@@ -1,3 +1,8 @@
+#TODO: Haven't added COVID-19 dataset yet.
+#TODO: get_data function
+#TODO: get_model function
+#TODO: main
+
 import os
 import time
 import numpy as np
@@ -38,6 +43,9 @@ test_data = test_data[test_data['Path'].str.contains("frontal")]
 train_data.to_csv('./Data/train.csv', index = False)
 test_data.to_csv('./Data/test.csv', index = False)
 
+print("Total training data: ", len(train_data))
+len_training_data = len(train_data)
+
 train_data_path = "./Data/train.csv"
 test_data_path = "./Data/test.csv"
 
@@ -48,17 +56,36 @@ class_names = ['No Finding', 'Enlarged Cardiomediastinum', 'Cardiomegaly', 'Lung
                'Lung Lesion', 'Edema', 'Consolidation', 'Pneumonia', 'Atelectasis', 'Pneumothorax', 
                'Pleural Effusion', 'Pleural Other', 'Fracture', 'Support Devices']
 
-
+num_clients = 3
 
 #Inheriting DataSet class which takes CSV file 
 class FromCSVDataset(Dataset):
-    def __init__(self, path):
+    def __init__(self, path, start_line = -1, end_line = -1):
+        '''
+        path: path of CSV file which records location of x-rays and their labelings
+        start_line: Starting line of the csv file from where data would be part of this object
+        end_line:   endling line of the csv file till where data would be part of this object   
+
+        start_line and end_line is used for segregating data for each client
+        '''
         xrays = []
         labels = []
+        
         with open(path) as paths_file:
             csv_ = csv.reader(paths_file)
+
+            #skipping header line
             next(csv_, None)
+
+            #iterating until start_line
+            if start_line != -1:
+                for _ in range(start_line):
+                    next(csv_, None)
+
+            num_iter_left = end_line - start_line
             for line in csv_:
+                if num_iter_left <= 0 and start_line != -1: break
+                num_iter_left -= 1
                 xray_path = line[0] 
                 label = line[5:]
                 #assuming uncertain or not reported data as negative
@@ -69,6 +96,7 @@ class FromCSVDataset(Dataset):
                 labels.append(label)
         self.xrays = xrays
         self.labels = labels
+        
     
     def __getitem__(self, idx):
         
@@ -86,5 +114,17 @@ class FromCSVDataset(Dataset):
     def __len__(self):
         return len(self.xrays)
 
-a = FromCSVDataset(train_data_path)
-print(a[9])
+
+def data_processing(comm: MPI.Comm):
+    #TODO: Check if it works.
+    comm_rank = comm.Get_rank()
+
+    test_dataset = FromCSVDataset(test_data_path)
+    train_datasets = []
+
+    split_size = int(len_training_data/num_clients)
+    for client_idx in range(num_clients):
+        train_datasets.append(train_data_path, split_size * client_idx, split_size * (client_idx + 1))
+    
+    return train_datasets, test_dataset
+            
