@@ -1,7 +1,7 @@
 #TODO: Haven't added COVID-19 dataset yet.
-#TODO: get_data function
-#TODO: get_model function
-#TODO: main
+#TODO: get_data function (done)
+#TODO: get_model function (done)
+#TODO: main (in process)
 
 import os
 import time
@@ -13,6 +13,8 @@ from PIL import Image
 import torch
 import torchvision
 import torchvision.transforms as transforms
+import torch.nn as nn
+import math
 
 from appfl.config import *
 from appfl.misc.data import Dataset
@@ -117,7 +119,7 @@ class FromCSVDataset(Dataset):
 
 def data_processing(comm: MPI.Comm):
     #TODO: Check if it works.
-    comm_rank = comm.Get_rank()
+    #Have to check whether MPI proctocol for data loading is necassary?
 
     test_dataset = FromCSVDataset(test_data_path)
     train_datasets = []
@@ -128,3 +130,29 @@ def data_processing(comm: MPI.Comm):
     
     return train_datasets, test_dataset
             
+
+class DenseNet121(nn.Module):
+    """
+    DenseNet121 model with additional Sigmoid layer for classification
+    TODO: See improvements in model and scope of using lateral X-rays by merging two densenet models (ensemble training).
+    """
+    def __init__(self, num_output):
+        super(DenseNet121, self).__init__()
+        self.densenet121 = torchvision.models.densenet121(pretrained = False)
+        num_features = self.densenet121.classifier.in_features
+        self.densenet121.classifier = nn.Sequential(
+            nn.Linear(num_features, num_output),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        x = self.densenet121(x)
+        return x
+
+
+def get_model(comm: MPI.Comm):
+    ## User-defined model
+    model = DenseNet121(num_output)
+    return model
+
+
