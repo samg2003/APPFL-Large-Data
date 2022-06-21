@@ -7,3 +7,5 @@ This repository is going to use the CheXPert dataset to train a model which reco
 
 Datasets:
 https://stanfordmlgroup.github.io/competitions/chexpert/
+
+Place the downloaded ChexPert Data in Data directory
