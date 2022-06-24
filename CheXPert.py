@@ -58,7 +58,7 @@ class_names = ['No Finding', 'Enlarged Cardiomediastinum', 'Cardiomegaly', 'Lung
                'Lung Lesion', 'Edema', 'Consolidation', 'Pneumonia', 'Atelectasis', 'Pneumothorax', 
                'Pleural Effusion', 'Pleural Other', 'Fracture', 'Support Devices']
 
-num_clients = 1
+num_clients = 3
 device = 'cpu'
 
 #Inheriting DataSet class which takes CSV file 
@@ -157,7 +157,7 @@ def get_model(comm: MPI.Comm):
     return model
 
 
-def main():
+def federated_learning():
     '''
     Part of this code is from https://github.com/APPFL/APPFL/blob/96a1da6d7aeb64a8a78bfcc7dc60fa37273dfdb5/examples/mnist.py
     '''
@@ -179,17 +179,21 @@ def main():
     cfg.fed.args.optim = 'Adam'
     cfg.fed.args.optim_args.lr = 1e-3
     cfg.fed.args.num_local_epochs = 1
-
+    cfg.validation = False
+    
     ## server
     cfg.fed.servername = "ServerFedAvg"
-    cfg.num_epochs = 2
+    cfg.num_epochs = 1
 
     start_time = time.time()
 
     """ User-defined model """
     model = get_model(comm)
-    loss_fn = torch.nn.CrossEntropyLoss()
-
+    
+    #maybe try BCE loss, worked better last time.
+    #loss_fn = torch.nn.CrossEntropyLoss()
+    loss_fn = torch.nn.BCELoss()
+    
     ## loading models
     cfg.load_model = False
     if cfg.load_model == True:
@@ -206,7 +210,7 @@ def main():
     )
 
     """ saving models """
-    cfg.save_model = False
+    cfg.save_model = True
     if cfg.save_model == True:
         cfg.save_model_dirname = "./save_models"
         cfg.save_model_filename = "Model"
@@ -224,6 +228,76 @@ def main():
         print("------DONE------", comm_rank)
     else:
         rs.run_serial(cfg, model, loss_fn, train_datasets, test_dataset)
+
+
+def train(model, train_dataset, test_dataset, num_epoch, save_directory):
+    optimizer = torch.optim.Adam(model.parameters(), lr = 0.0001,
+                               betas = (0.9, 0.999), eps = 1e-08, weight_decay = 0) 
+    loss = torch.nn.BCELoss()
+
+    ## loading models
+    load_model = False
+    if load_model == True:
+        path_to_model = "enter file path"
+        model_loaded = torch.load(path_to_model)
+        model.load_state_dict(model_loaded['state_dict'])
+        optimizer.load_state_dict(model_loaded['optimizer'])
+
+    #training starts
+    train_start = []
+    train_end = []
+    for epoch in range(num_epoch):
+        train_start.append(time.time())
         
+        #one epoch
+        model.train()
+        total_training_loss = 0
+        for idx, (inp, label) in enumerate(train_dataset):
+            if device == 'cuda':
+                label = label.cuda(non_blocking = True)
+            out = model(inp)
+            loss_val = loss(out, label)
+            optimizer.zero_grad()
+            loss_val.backward()
+            optimizer.step()
+            total_training_loss += loss_val.item()
+        loss_training = total_training_loss/len(train_dataset)
+
+        #validation
+        model.eval()
+        total_test_loss = 0
+        with torch.no_grad():
+            for idx, (inp, label) in enumerate(test_dataset):
+                if device == 'cuda':
+                    label = label.cuda(non_blocking = True)
+                out = model(inp)
+                
+                total_test_loss += loss(out, label)
+                
+        loss_test = total_test_loss / len(test_dataset)
+
+        train_end.append(time.time())
+
+        #info print in terminal
+        print("Training loss: ", str(loss_training), "Test loss: ", str(loss_test))
+
+        torch.save({'epoch': epoch, 'state_dict': model.state_dict(), 
+                            'optimizer' : optimizer.state_dict()}, 
+                            save_directory + 'model_trained_' + str(epoch) + '.pth.tar')
+
+def central_learning():
+    model = DenseNet121(num_output)
+    if device == 'cuda':
+        model = torch.nn.DataParallel(model).cuda()
+
+    
+    train_dataset_pre = FromCSVDataset(train_data_path)
+    test_dataset_pre = FromCSVDataset(test_data_path)
+
+    train_dataset = torch.utils.data.DataLoader(dataset=train_dataset_pre, batch_size=64, shuffle=True,  num_workers=5)
+    test_dataset = torch.utils.data.DataLoader(dataset=test_dataset_pre, num_workers=5)
+
+    train(model, train_dataset, test_dataset, num_epoch= 1, save_directory = "central_model/")
+
 if __name__ == "__main__":
-    main()
+    federated_learning()
